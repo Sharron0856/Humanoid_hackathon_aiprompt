@@ -9,6 +9,8 @@
 - set_enabled(flag)：静音开关。
 
 播放实现：wav 用内置 winsound；其他格式（mp3等）走 winmm MCI，都无需额外依赖。
+真机模式可用 set_robot_sink(robot_speaker.RobotSpeaker()) 把声音切到 G1 扬声器，
+机器人端播放失败会自动回退本机。
 """
 import ctypes
 import hashlib
@@ -34,6 +36,16 @@ _q = queue.Queue()
 _enabled = True
 _lock = threading.Lock()
 _worker = None
+_robot_sink = None   # 非None时优先从 G1 扬声器播出（见 set_robot_sink）
+
+
+def set_robot_sink(sink):
+    """把播放出口切到 G1 扬声器（sink=robot_speaker.RobotSpeaker 实例）。
+
+    传 None 恢复本机播放。机器人端播放异常时单条自动回退本机，不中断队列。
+    """
+    global _robot_sink
+    _robot_sink = sink
 
 
 def _api_key():
@@ -82,7 +94,19 @@ def _run():
         if not _enabled:
             continue
         try:
-            _play_blocking(synth(text))
+            path = synth(text)
+        except Exception as e:
+            print(f"（语音合成失败，已跳过: {e}）")
+            continue
+        sink = _robot_sink
+        if sink is not None:
+            try:
+                sink.play_file(path)
+                continue
+            except Exception as e:
+                print(f"（G1扬声器播放失败，本条回退本机: {e}）")
+        try:
+            _play_blocking(path)
         except Exception as e:
             print(f"（语音播报失败，已跳过: {e}）")
 

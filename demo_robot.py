@@ -25,5 +25,17 @@ motions.MOTIONS["7_demo_full"] = _full   # p7 = 通し
 
 import ai_robot
 
+# 语音教练：真机执行时按动作进度报幕（挨拶/各节コツ/结尾）。
+# 配 --robot-speaker 从 G1 扬声器播出；TTS 不可用时自动降级为控制台字幕。
+try:
+    from demo_voice import TTS_READY, VoiceCoach
+    _coach = VoiceCoach()
+    _coach.add_alias("0_demo_full", "7_demo_full")   # p7 与通し共用提示表
+    if TTS_READY:
+        _coach.prefetch_all()
+    ai_robot.VOICE_COACH = _coach
+except Exception as _e:
+    print(f"⚠ 语音教练未启用: {_e}")
+
 if __name__ == "__main__":
     ai_robot.main()

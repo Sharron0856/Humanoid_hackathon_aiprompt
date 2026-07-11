@@ -379,8 +379,12 @@ class G1ArmSdkExecutor:
                 break
             time.sleep(1.0 / self.safety.control_hz)
 
-    def execute(self, motion: dict):
-        """执行一条已校验动作；调用方必须完成现场人工确认。"""
+    def execute(self, motion: dict, on_tick=None):
+        """执行一条已校验动作；调用方必须完成现场人工确认。
+
+        on_tick(t)：阶段2每个控制周期回调一次，t 为限速拉伸后时间轴上的
+        已播秒数（进入首帧的阶段1不回调）。供语音教练等模块同步进度。
+        """
         if not self._connected:
             raise RealRobotError("尚未完成只读连接")
         controlled = validate_for_robot(
@@ -425,6 +429,8 @@ class G1ArmSdkExecutor:
             while True:
                 elapsed = time.monotonic() - run_start
                 t = min(elapsed, prepared.duration)
+                if on_tick is not None:
+                    on_tick(t)
                 deg = pose_at({"waypoints": prepared.waypoints}, t, neutral)
                 target = {tok: math.radians(deg[tok]) for tok in controlled}
                 state = self._write(target, 1.0)

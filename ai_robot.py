@@ -20,6 +20,7 @@ import argparse
 import math
 import secrets
 import sys
+import time
 
 from llm_motion import MODEL, MotionAgent
 from motions import MOTIONS
@@ -53,7 +54,23 @@ def parse_args():
                     help="单关节速度上限，首次联调默认 10°/s，最大允许45°/s")
     ap.add_argument("--allow-waist-roll-pitch", action="store_true",
                     help="仅硬件明确支持时启用腰 roll/pitch；默认拒绝")
+    ap.add_argument("--robot-speaker", action="store_true",
+                    help="语音从 G1 内置扬声器播出（Qwen TTS→PCM→PlayStream；"
+                         "失败自动回退本机扬声器）")
     return ap.parse_args()
+
+
+# 语音教练挂载点：demo_robot 等入口可注入 demo_voice.VoiceCoach 实例，
+# 真机执行时按限速拉伸比例换算回原时间轴触发报幕。
+VOICE_COACH = None
+
+
+def _enable_robot_speaker():
+    """DDS 初始化完成后调用：把 tts_qwen 的播放出口切到 G1 扬声器。"""
+    import tts_qwen
+    from robot_speaker import RobotSpeaker
+    tts_qwen.set_robot_sink(RobotSpeaker())
+    print("✓ 语音将从 G1 扬声器播出（单条失败自动回退本机）")
 
 
 def preset_motion(text: str):
@@ -125,6 +142,15 @@ def main():
         print(f"正在通过 {args.interface} 等待 rt/lowstate …")
         executor.connect_read_only()
         print("✓ 已收到新鲜的 G1 lowstate")
+        if args.robot_speaker:
+            try:
+                _enable_robot_speaker()
+                if args.read_only:   # 只读模式顺便做扬声器链路测试（不涉及运动）
+                    tts_speak("スピーカーテスト。こんにちは！")
+                    print("已发送扬声器测试语音，等待播放……")
+                    time.sleep(8)
+            except Exception as e:
+                print(f"⚠ G1扬声器启用失败（{e}），语音回退本机播放")
         if args.read_only:
             diag = executor.status_summary()
             print(f"mode_pr={diag['mode_pr']}  mode_machine={diag['mode_machine']}")
@@ -198,7 +224,16 @@ def main():
 
             tts_speak("動作を開始します。")
             print("真机执行中；按 Ctrl+C 立即进入 arm_sdk 权重释放。")
-            completed = executor.execute(motion)
+            on_tick = None
+            if VOICE_COACH is not None:
+                # 限速拉伸是全局近似均匀的：按时长比例把真机时间轴映射回
+                # 编排时间轴，报幕点就落在对应的动作相位上。
+                orig = motion["waypoints"][-1]["t"]
+                scale = orig / prepared.duration if prepared.duration > 0 else 1.0
+                key = motion.get("name", "")
+                on_tick = (lambda t, _k=key, _s=scale:
+                           VOICE_COACH.on_tick(_k, t * _s))
+            completed = executor.execute(motion, on_tick=on_tick)
             print(f"✓ 动作完成并释放 arm_sdk 权重（{completed.duration:.1f}s）")
         except KeyboardInterrupt:
             if executor:

@@ -127,7 +127,8 @@ def robot_self_contacts(model, data):
 
 # ---------------- 主程序 ----------------
 
-def main():
+def main(on_tick=None):
+    """on_tick(motion_key, sim_t): 每帧回调，供语音教练等外部模块同步播放进度。"""
     model = mujoco.MjModel.from_xml_path(MODEL_PATH)
     data = mujoco.MjData(model)
 
@@ -210,6 +211,8 @@ def main():
                 if not state["done"]:
                     state["done"] = True
                     print(f"✔ 本节播放完毕（{total:.1f}s）。按 R 重播，按 1-{len(motion_keys)} 换节，按 L 切循环。")
+            if on_tick is not None:
+                on_tick(motion_keys[state["idx"]], sim_t)
             target = pose_at(motion, sim_t, neutral_deg)
 
             # 回到自然站姿再叠加当前动作角度（没写到的关节保持自然站姿）
