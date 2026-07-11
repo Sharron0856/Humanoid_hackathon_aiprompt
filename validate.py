@@ -1,11 +1,8 @@
 """无头验证：关节匹配 / 限位 / 自碰撞扫描（不开窗口）。"""
-import math, sys
-sys.path.insert(0, r"c:\Users\khlam\Desktop\g1-motion-sim")
+import math
 import mujoco
 from motions import MOTIONS
-from sim_viewer import resolve_joint, pose_at, robot_self_contacts
-
-MODEL_PATH = r"c:\Users\khlam\Desktop\g1-motion-sim\mujoco_menagerie\unitree_g1\scene.xml"
+from sim_viewer import resolve_joint, pose_at, robot_self_contacts, MODEL_PATH
 model = mujoco.MjModel.from_xml_path(MODEL_PATH)
 data = mujoco.MjData(model)
 

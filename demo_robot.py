@@ -4,7 +4,8 @@
 预设映射：
     p1 = ①背伸びの運動        p2 = ②腕の運動        p3 = ③腕を回す運動
     p4 = ④胸をそらす運動      p5 = ⑤体を横曲げする運動
-    p6 = デモ通し ①~⑤ 连续（约68秒，限速后会更长）
+    p6 = 零号挨拶（挥手+胸前礼）
+    p7 = デモ通し 挨拶+①~⑤ 连续（约87秒，限速后会更长）
 
 用法（参数与 ai_robot.py 相同）：
     .\.venv-real\Scripts\python.exe demo_robot.py --robot-dof 29 --interface 192.168.123.222 --execute
@@ -19,8 +20,8 @@ import motions
 _demo = demo_viewer.build()
 _full = _demo.pop("0_demo_full")
 motions.MOTIONS.clear()
-motions.MOTIONS.update(_demo)            # p1~p5 = ①~⑤ 单节
-motions.MOTIONS["6_demo_full"] = _full   # p6 = 通し
+motions.MOTIONS.update(_demo)            # p1~p5 = ①~⑤ 单节，p6 = 挨拶
+motions.MOTIONS["7_demo_full"] = _full   # p7 = 通し
 
 import ai_robot
 
