@@ -40,6 +40,11 @@ except Exception:
         pass
 
 
+# 单关节速度上限默认值。demo_robot 等演出入口可在 main() 前改成 45（编排
+# 峰值 43.6°/s，45 下时间轴零拉伸=仿真原节奏）；首次联调入口保持保守的 10。
+DEFAULT_MAX_SPEED_DEG = 10.0
+
+
 def parse_args():
     ap = argparse.ArgumentParser(description="G1 AI 真机上肢控制（默认 dry-run）")
     ap.add_argument("--robot-dof", type=int, choices=(23, 29), required=True,
@@ -50,8 +55,9 @@ def parse_args():
                       help="只订阅 rt/lowstate，绝不创建 publisher")
     mode.add_argument("--execute", action="store_true",
                       help="允许在逐动作随机码确认后发布 rt/arm_sdk")
-    ap.add_argument("--max-speed-deg", type=float, default=10.0,
-                    help="单关节速度上限，首次联调默认 10°/s，最大允许45°/s")
+    ap.add_argument("--max-speed-deg", type=float, default=DEFAULT_MAX_SPEED_DEG,
+                    help=f"单关节速度上限，默认 {DEFAULT_MAX_SPEED_DEG:g}°/s，"
+                         "最大允许45°/s")
     ap.add_argument("--allow-waist-roll-pitch", action="store_true",
                     help="仅硬件明确支持时启用腰 roll/pitch；默认拒绝")
     ap.add_argument("--robot-speaker", action="store_true",

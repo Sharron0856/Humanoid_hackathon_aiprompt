@@ -71,7 +71,7 @@ class SafetyConfig:
     tracking_grace_s: float = 2.0
     weight_ramp_s: float = 2.0
     release_s: float = 1.5
-    kp: float = 40.0
+    kp: float = 50.0
     kd: float = 1.0
     wrist_kp: float = 20.0
     wrist_kd: float = 1.0
@@ -338,7 +338,8 @@ class G1ArmSdkExecutor:
     def stop(self):
         self._stop.set()
 
-    def _write(self, target_rad: dict[Token, float], weight: float):
+    def _write(self, target_rad: dict[Token, float], weight: float,
+               vel_rad: dict[Token, float] | None = None):
         state = self._fresh_state()
         if state is None:
             raise RealRobotError("rt/lowstate 看门狗超时，立即停止发送")
@@ -347,12 +348,16 @@ class G1ArmSdkExecutor:
         cmd.mode_pr = state.mode_pr
         cmd.mode_machine = state.mode_machine
         cmd.motor_cmd[ARM_SDK_WEIGHT_INDEX].q = max(0.0, min(1.0, weight))
+        dq_limit = self.safety.max_speed_rad_s
         for tokens, q in target_rad.items():
             motor = cmd.motor_cmd[G1_JOINT_INDEX[tokens]]
             motor.mode = 1
             motor.tau = 0.0
             motor.q = float(q)
-            motor.dq = 0.0
+            # 速度前馈：dq=0 会让 kd 项全程"刹车"，表现为滞后和路点顿挫；
+            # 填目标速度后 kd 变为助推贴合。保持/释放阶段仍传 None（=0）。
+            dq = 0.0 if vel_rad is None else float(vel_rad.get(tokens, 0.0))
+            motor.dq = max(-dq_limit, min(dq_limit, dq))
             if "wrist" in tokens:
                 motor.kp = self.safety.wrist_kp
                 motor.kd = self.safety.wrist_kd
@@ -410,6 +415,8 @@ class G1ArmSdkExecutor:
 
         try:
             # 阶段1：从实时姿态平滑进入动作首帧，同时渐增 arm_sdk 权重。
+            approach_vel = {t: (first_rad[t] - start_rad[t]) / approach_s
+                            for t in controlled}
             stage_start = time.monotonic()
             while True:
                 elapsed = time.monotonic() - stage_start
@@ -417,7 +424,8 @@ class G1ArmSdkExecutor:
                 target = {t: start_rad[t] * (1.0 - ratio) + first_rad[t] * ratio
                           for t in controlled}
                 weight = min(1.0, elapsed / self.safety.weight_ramp_s)
-                self._write(target, weight)
+                self._write(target, weight,
+                            approach_vel if ratio < 1.0 else None)
                 if self._stop.is_set():
                     raise RealRobotError("操作者停止")
                 if ratio >= 1.0:
@@ -433,7 +441,15 @@ class G1ArmSdkExecutor:
                     on_tick(t)
                 deg = pose_at({"waypoints": prepared.waypoints}, t, neutral)
                 target = {tok: math.radians(deg[tok]) for tok in controlled}
-                state = self._write(target, 1.0)
+                # 有限差分求目标速度作前馈；限速拉伸已保证每段 ≤ max_speed。
+                dt = min(period, prepared.duration - t)
+                vel = None
+                if dt > 1e-6:
+                    nxt = pose_at({"waypoints": prepared.waypoints}, t + dt,
+                                  neutral)
+                    vel = {tok: math.radians(nxt[tok] - deg[tok]) / dt
+                           for tok in controlled}
+                state = self._write(target, 1.0, vel)
 
                 if elapsed > self.safety.tracking_grace_s:
                     worst = max(
