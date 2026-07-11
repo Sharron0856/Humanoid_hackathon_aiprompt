@@ -46,14 +46,18 @@ _CHEST_ARCH = _arms(-120, 55, 85, {("waist", "pitch"): -15})  # 张臂扩胸+腰
 _TUCK = _arms(-30, 15, 0)            # 屈肘收于胸前（肘qpos 0=实弯约80°）
 
 # ⑤~⑬ 用到的姿态
-_SIDE_BEND_A = {("waist", "roll"): 22,   # 向一侧弯腰，对侧手臂举过头
+_SIDE_BEND_A = {("waist", "roll"): -22,  # 向一侧弯腰，对侧手臂举过头（举右臂=向远离右臂侧弯）
                 ("right", "shoulder", "pitch"): -150,
                 ("right", "shoulder", "roll"): -25,
-                ("right", "elbow"): 85}
-_SIDE_BEND_B = {("waist", "roll"): -22,
+                ("right", "elbow"): 85,
+                ("left", "shoulder", "roll"): 30,   # 下垂臂外张，避免弯腰时手腕撞髋
+                ("left", "elbow"): 85}
+_SIDE_BEND_B = {("waist", "roll"): 22,
                 ("left", "shoulder", "pitch"): -150,
                 ("left", "shoulder", "roll"): 25,
-                ("left", "elbow"): 85}
+                ("left", "elbow"): 85,
+                ("right", "shoulder", "roll"): -30,
+                ("right", "elbow"): 85}
 _FWD_BEND = _arms(-60, 15, 85, {("waist", "pitch"): 28})    # 前弯（腰pitch限位30°）
 _FWD_HALF = _arms(-40, 15, 80, {("waist", "pitch"): 15})    # 前弯回弹的中间位
 _TWIST_A = {("waist", "yaw"): 45,

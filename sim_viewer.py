@@ -172,6 +172,14 @@ def main():
             i = max(0, i - 1) if ch == "-" else min(len(SPEEDS) - 1, i + 1)
             state["speed"] = SPEEDS[i]
             print(f"▶ 播放速度: {state['speed']}x")
+        elif keycode == 263:   # ← 后退5秒
+            state["sim_t"] = max(0.0, state["sim_t"] - 5.0)
+            state["done"] = False
+            print(f"▶ 后退5秒 → {state['sim_t']:.1f}s")
+        elif keycode == 262:   # → 前进5秒
+            state["sim_t"] += 5.0
+            state["done"] = False
+            print(f"▶ 前进5秒 → {state['sim_t']:.1f}s")
         elif ch.isdigit():
             i = int(ch) - 1
             if 0 <= i < len(motion_keys):
@@ -183,7 +191,7 @@ def main():
                       f"{MOTIONS[motion_keys[i]]['description']}")
 
     print("已加载模型:", MODEL_PATH)
-    print("按数字键1-{}切换动作 / R重播 / L切换单次·循环 / -减速 =加速 / 空格暂停 / ESC退出".format(len(motion_keys)))
+    print("按数字键1-{}切换动作 / R重播 / L切换单次·循环 / -减速 =加速 / ←后退5秒 →前进5秒 / 空格暂停 / ESC退出".format(len(motion_keys)))
     print("当前为单次播放模式：每节播完一遍自动停在结束姿态")
     print(f"\n▶ 当前动作 {motion_keys[0]}: {MOTIONS[motion_keys[0]]['description']}")
 
