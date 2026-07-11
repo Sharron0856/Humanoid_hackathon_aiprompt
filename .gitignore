@@ -1,0 +1,6 @@
+.venv-real/
+__pycache__/
+*.pyc
+
+# 第三方模型库：由 README 指引用户自行 git clone，不纳入本仓库
+mujoco_menagerie/

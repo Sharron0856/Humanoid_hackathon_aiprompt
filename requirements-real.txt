@@ -1,0 +1,5 @@
+# 真机链路使用独立 Python 3.10 环境；不要装入 MuJoCo/AI 主环境。
+cyclonedds==0.10.2
+unitree_sdk2py @ git+https://github.com/unitreerobotics/unitree_sdk2_python.git@37116c521f1588482e238d8450e471ba78ab9863
+openai>=2.0,<3
+dashscope>=1.20,<2
