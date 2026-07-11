@@ -37,6 +37,12 @@ _enabled = True
 _lock = threading.Lock()
 _worker = None
 _robot_sink = None   # 非None时优先从 G1 扬声器播出（见 set_robot_sink）
+_playing = False     # 当前是否有一条正在合成/播放（供 is_busy 查询）
+
+
+def is_busy():
+    """是否正在播报或有排队未播——节拍报数用它实现"忙则跳过不排队"。"""
+    return _playing or not _q.empty()
 
 
 def set_robot_sink(sink):
@@ -89,26 +95,31 @@ def _play_blocking(path):
 
 
 def _run():
+    global _playing
     while True:
         text = _q.get()
         if not _enabled:
             continue
+        _playing = True
         try:
-            path = synth(text)
-        except Exception as e:
-            print(f"（语音合成失败，已跳过: {e}）")
-            continue
-        sink = _robot_sink
-        if sink is not None:
             try:
-                sink.play_file(path)
-                continue
+                path = synth(text)
             except Exception as e:
-                print(f"（G1扬声器播放失败，本条回退本机: {e}）")
-        try:
-            _play_blocking(path)
-        except Exception as e:
-            print(f"（语音播报失败，已跳过: {e}）")
+                print(f"（语音合成失败，已跳过: {e}）")
+                continue
+            sink = _robot_sink
+            if sink is not None:
+                try:
+                    sink.play_file(path)
+                    continue
+                except Exception as e:
+                    print(f"（G1扬声器播放失败，本条回退本机: {e}）")
+            try:
+                _play_blocking(path)
+            except Exception as e:
+                print(f"（语音播报失败，已跳过: {e}）")
+        finally:
+            _playing = False
 
 
 def speak(text):

@@ -5,6 +5,9 @@
     挨拶       通し开始时（与挥手/胸前礼动作同步，14s窗口）
     各节コツ   在上一节结束（=节间缓冲开始）时开口，节名短句落在缓冲+节首拍内，
                コツ长句自然压在动作上（NHK原版旁白也是边做边说）
+    节拍报数   ②~⑤コツ说完后逐拍数「いち、に、さん、し…」（每拍一个提示点，
+               TTS忙则该拍跳过不排队，コツ结束即从当前正确拍接上，永不漂移；
+               ①不报数，DEMO_COUNT=0 可整体关闭）
     结尾       ⑤收尾站姿定格时
 
 同步机制：VoiceCoach.on_tick(motion_key, sim_t) 挂进 sim_viewer 的每帧回调，
@@ -33,7 +36,8 @@ import demo_viewer
 try:
     if not os.environ.get("DASHSCOPE_API_KEY"):
         raise RuntimeError("未设置 DASHSCOPE_API_KEY")
-    from tts_qwen import prefetch as _tts_prefetch, speak as _tts_speak
+    from tts_qwen import (is_busy as _tts_busy, prefetch as _tts_prefetch,
+                          speak as _tts_speak)
     TTS_READY = True
 except Exception as _e:  # noqa: N816
     TTS_READY = False
@@ -44,6 +48,9 @@ except Exception as _e:  # noqa: N816
 
     def _tts_prefetch(texts):
         pass
+
+    def _tts_busy():
+        return False
 
 
 def say(text):
@@ -76,12 +83,20 @@ FEEDBACK_EXAMPLES = [
     "いい感じですね！頑張りましょう",
 ]
 
+# ---- 日语节拍报数（②~⑤；①的コツ是"ゆっくり"，报数会催，不加）----
+# 逐拍触发+忙则跳过：每拍一个提示点，触发时TTS若正忙（コツ未说完/上个数字
+# 未播完）则该拍直接跳过——コツ一结束，报数从当前拍的正确数字接上，永不漂移。
+# 可用环境变量 DEMO_COUNT=0 整体关闭（如真机扬声器逐字RPC延迟过大时）。
+COUNTS = ["いち", "に", "さん", "し", "ご", "ろく", "しち", "はち"]
+COUNT_SECTIONS = {"2_ude", "3_udemawashi", "4_mune", "5_yokomage"}
+COUNTING_ON = os.environ.get("DEMO_COUNT", "1") != "0"
+
 
 class VoiceCoach:
     """按播放时钟触发台词；支持暂停/快退/重播/切动作。"""
 
     def __init__(self):
-        # 每个动作一张提示点表 {motion_key: [(触发秒, 台词), ...]}
+        # 台词提示表 {motion_key: [(触发秒, 台词), ...]}（串行排队，保证顺序）
         timeline = demo_viewer.section_timeline()
         cues = [(0.3, GREETING_LINE)]
         for key, _name, start, _end in timeline:
@@ -95,32 +110,54 @@ class VoiceCoach:
             self._cues[key] = [(0.1, text)]
         self._cues["6_aisatsu"] = [(0.3, GREETING_LINE)]
 
-        self._fired = set()      # {(motion_key, 触发秒)}
+        # 报数提示表（逐拍；忙则跳过不排队）
+        beat = demo_viewer.BEAT
+        self._count_cues = {"0_demo_full": []}
+        if COUNTING_ON:
+            for key, _name, start, _end in timeline:
+                if key not in COUNT_SECTIONS:
+                    continue
+                self._count_cues["0_demo_full"] += [
+                    (start + i * beat, COUNTS[i % 8]) for i in range(16)]
+                # 单节播放：拍号网格整体后移1拍起手
+                self._count_cues[key] = [
+                    ((i + 1) * beat, COUNTS[i % 8]) for i in range(16)]
+            self._count_cues["0_demo_full"].sort()
+
+        self._fired = set()      # {(motion_key, 触发秒, 类型)}
         self._key = None
         self._last_t = 0.0
 
     def prefetch_all(self):
-        """预热全部台词的TTS合成（后台进行），到点播放零等待。"""
+        """预热全部台词+报数词的TTS合成（后台进行），到点播放零等待。"""
         texts = {text for cue in self._cues.values() for _t, text in cue}
+        texts |= set(COUNTS) if COUNTING_ON else set()
         _tts_prefetch(sorted(texts))
 
     def add_alias(self, src_key, alias_key):
         """让另一个动作名共享同一张提示点表（如真机预设 7_demo_full=通し）。"""
         self._cues[alias_key] = self._cues[src_key]
+        if src_key in self._count_cues:
+            self._count_cues[alias_key] = self._count_cues[src_key]
 
     def on_tick(self, key, t):
-        """sim_viewer 每帧回调：到点未播则播。"""
+        """sim_viewer 每帧回调：到点未播则播；报数忙则跳过。"""
         if key != self._key:
             self._key = key      # 切动作：该动作的提示点全部重新武装
-            self._fired = {(k, ct) for (k, ct) in self._fired if k != key}
+            self._fired = {c for c in self._fired if c[0] != key}
         elif t + 0.5 < self._last_t:   # 快退/重播：回跳点之后的提示点重新武装
-            self._fired = {(k, ct) for (k, ct) in self._fired
-                           if k != key or ct < t}
+            self._fired = {c for c in self._fired if c[0] != key or c[1] < t}
         self._last_t = t
         for ct, text in self._cues.get(key, ()):
-            if ct <= t and (key, ct) not in self._fired:
-                self._fired.add((key, ct))
+            if ct <= t and (key, ct, "line") not in self._fired:
+                self._fired.add((key, ct, "line"))
                 say(text)
+        for ct, word in self._count_cues.get(key, ()):
+            if ct <= t and (key, ct, "count") not in self._fired:
+                self._fired.add((key, ct, "count"))   # 过点即标记：跳过不补
+                if not _tts_busy() and t - ct < 0.4:  # 已过大半拍的也不追
+                    print(f"  ♪ {word}")
+                    _tts_speak(word)
 
     # ---- 视觉互动接口（预留） ----
     def coach_feedback(self, observations):
