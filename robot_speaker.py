@@ -17,6 +17,9 @@ import wave
 TARGET_RATE = 16000     # G1 音频服务要求：16kHz / 16bit / 单声道 PCM
 CHUNK_BYTES = 96000     # 每次 PlayStream 的 PCM 字节数（=3秒），现场可按固件表现调整
 APP_NAME = "g1_taiso"
+# 软件增益：音量100仍不够响时设 G1_SPEAKER_GAIN=1.5~2.0（信号放大，
+# 超出部分削波会轻微破音，现场响度优先时可接受）
+GAIN = float(os.environ.get("G1_SPEAKER_GAIN", "1.0"))
 
 
 def wav_to_pcm16k(path):
@@ -35,6 +38,8 @@ def wav_to_pcm16k(path):
         raise ValueError(f"不支持的声道数: {nch}")
     if rate != TARGET_RATE:
         frames, _ = audioop.ratecv(frames, 2, 1, rate, TARGET_RATE, None)
+    if GAIN != 1.0:
+        frames = audioop.mul(frames, 2, GAIN)
     return frames, len(frames) / (TARGET_RATE * 2)
 
 

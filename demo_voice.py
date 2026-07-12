@@ -22,14 +22,22 @@ API key 时自动降级为控制台字幕模式，方便无网排练和核对时
 
 用法：$env:PYTHONUTF8=1; python demo_voice.py
 """
+import json
 import os
 import sys
+import time
+from pathlib import Path
 
 for _s in (sys.stdout, sys.stderr):
     if hasattr(_s, "reconfigure"):
         _s.reconfigure(encoding="utf-8", errors="replace")
 
 import demo_viewer
+
+_DIR = Path(__file__).resolve().parent
+VISION_CLOCK = _DIR / "vision_clock.json"    # 播放时钟广播给视觉进程
+OBS_PATH = _DIR / "observations.json"        # 视觉进程写的观察结果
+REPORT_PATH = _DIR / "session_report.json"   # 视觉进程写的班后汇报数据
 
 # ---- TTS 优雅降级：没依赖/没key就用控制台字幕 ----
 try:
@@ -61,7 +69,8 @@ def say(text):
 # ---- 台词表 ----
 GREETING_LINE = ("みなさん、こんにちは！ラジオ体操の時間です！"
                  "今日も元気に、いっしょに体を動かしましょう！")
-CLOSING_LINE = "お疲れ様でした！この調子で、今日も一日、頑張りましょう！"
+CLOSING_LINE = ("これで、ラジオ体操を終わります。お疲れ様でした！"
+                "みんな、ありがとう！また一緒に踊りましょう！")
 
 KOTSU = {
     "1_senobi": ("背伸びの運動！腕をよく伸ばして、ゆっくり高く上げ、"
@@ -122,14 +131,37 @@ class VoiceCoach:
                     ((i + 1) * beat, COUNTS[i % 8]) for i in range(16)]
             self._count_cues["0_demo_full"].sort()
 
+        # 视觉互动播报窗 {motion_key: [(节key, 窗开始秒, 窗结束秒), ...]}
+        # 每节第9~14拍(コツ长句已落,报数默认关):读 observations 播报,
+        # 忙则顺延到下一拍,窗结束还没播出去就放弃本节(不漂移不堆积)。
+        # 评哪几节由 vision_rules.SECTIONS 决定(当前③④)。
+        try:
+            import vision_rules
+            eval_keys = tuple(vision_rules.SECTIONS)
+        except ImportError:
+            eval_keys = ("3_udemawashi", "4_mune")
+        self._fb_windows = {"0_demo_full": []}
+        for key, _name, start, _end in timeline:
+            if key in eval_keys:
+                self._fb_windows["0_demo_full"].append(
+                    (key, start + 9 * beat, start + 14 * beat))
+        for key in eval_keys:   # 单节播放:拍号网格有1拍起手偏移
+            self._fb_windows[key] = [(key, 10 * beat, 15 * beat)]
+
         self._fired = set()      # {(motion_key, 触发秒, 类型)}
         self._key = None
         self._last_t = 0.0
+        self._clock_wall = 0.0   # 上次写时钟文件的墙钟
 
     def prefetch_all(self):
-        """预热全部台词+报数词的TTS合成（后台进行），到点播放零等待。"""
+        """预热全部台词+报数词+互动台词的TTS合成（后台进行），到点零等待。"""
         texts = {text for cue in self._cues.values() for _t, text in cue}
         texts |= set(COUNTS) if COUNTING_ON else set()
+        try:
+            import vision_rules
+            texts |= set(vision_rules.all_feedback_texts())
+        except ImportError:
+            pass
         _tts_prefetch(sorted(texts))
 
     def add_alias(self, src_key, alias_key):
@@ -137,9 +169,45 @@ class VoiceCoach:
         self._cues[alias_key] = self._cues[src_key]
         if src_key in self._count_cues:
             self._count_cues[alias_key] = self._count_cues[src_key]
+        if src_key in self._fb_windows:
+            self._fb_windows[alias_key] = self._fb_windows[src_key]
+
+    def _broadcast_clock(self, key, t):
+        """把播放时钟广播给视觉进程(节流0.2s,原子替换)。"""
+        now = time.time()
+        if now - self._clock_wall < 0.2:
+            return
+        self._clock_wall = now
+        try:
+            tmp = VISION_CLOCK.with_suffix(".tmp")
+            tmp.write_text(json.dumps({"key": key, "t": round(t, 3),
+                                       "wall": now}), "utf-8")
+            os.replace(tmp, VISION_CLOCK)
+        except OSError:
+            pass                      # 时钟写不出去不影响演示本体
+
+    def _try_feedback(self, key, t):
+        """在本节互动窗内尝试播报视觉观察结果(每节最多1句)。"""
+        for sec, ws, we in self._fb_windows.get(key, ()):
+            # 标记第二项必须是数字(与line/count标记同构):回绕清理用 c[1]<t
+            marker = (key, ws, f"fb_{sec}")
+            if not (ws <= t <= we) or marker in self._fired:
+                continue
+            if _tts_busy():
+                return                # 忙则顺延到下一帧再试
+            try:
+                data = json.loads(OBS_PATH.read_text("utf-8"))
+            except (OSError, ValueError):
+                return                # 还没有结果:窗内继续等
+            if data.get("section") != sec or \
+                    time.time() - data.get("wall", 0) > 30:
+                return                # 旧节/陈旧数据不播
+            self._fired.add(marker)
+            self.coach_feedback(data.get("observations"))
 
     def on_tick(self, key, t):
         """sim_viewer 每帧回调：到点未播则播；报数忙则跳过。"""
+        self._broadcast_clock(key, t)
         if key != self._key:
             self._key = key      # 切动作：该动作的提示点全部重新武装
             self._fired = {c for c in self._fired if c[0] != key}
@@ -150,21 +218,45 @@ class VoiceCoach:
             if ct <= t and (key, ct, "line") not in self._fired:
                 self._fired.add((key, ct, "line"))
                 say(text)
+                if text == CLOSING_LINE:     # 感谢语之后:班后汇报(排队顺播)
+                    self._speak_report()
         for ct, word in self._count_cues.get(key, ()):
             if ct <= t and (key, ct, "count") not in self._fired:
                 self._fired.add((key, ct, "count"))   # 过点即标记：跳过不补
                 if not _tts_busy() and t - ct < 0.4:  # 已过大半拍的也不追
                     print(f"  ♪ {word}")
                     _tts_speak(word)
+        self._try_feedback(key, t)
 
-    # ---- 视觉互动接口（预留） ----
+    def _speak_report(self):
+        """班后汇报:人数、需要关照的人、已存档。数据不新鲜/没有就整段跳过。"""
+        try:
+            import vision_rules as vr
+            data = json.loads(REPORT_PATH.read_text("utf-8"))
+        except (ImportError, OSError, ValueError):
+            return
+        if time.time() - data.get("wall", 0) > 600:   # 只播本场的
+            return
+        say(vr.REPORT_END)
+        participants = data.get("participants") or []
+        if participants:
+            say(vr.report_count_line(len(participants)))
+        for name in data.get("small") or []:
+            say(f"{name}{vr.REPORT_CALLOUT}")
+        if data.get("record_file"):
+            say(vr.REPORT_SAVED)
+
+    # ---- 视觉互动接口（vision_coach.py 经 observations.json 喂入） ----
     def coach_feedback(self, observations):
-        """未来接视觉识别：observations=[{"name":..., "advice":...}, ...]。
+        """observations=[{"name":..., "advice":...} 或 {"text":...}, ...]。
 
         列表为空/None 时不触发任何语音（=没识别到人就不出声）。
         """
         for obs in observations or []:
-            say(f"{obs['name']}さん、{obs['advice']}")
+            if "text" in obs:
+                say(obs["text"])
+            else:
+                say(f"{obs['name']}さん、{obs['advice']}")
 
 
 def main():

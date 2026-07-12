@@ -5,3 +5,10 @@ __pycache__/
 
 # 第三方模型库：由 README 指引用户自行 git clone，不纳入本仓库
 mujoco_menagerie/
+
+# 演出运行时产物(进程间通信文件与每场留档)
+observations.json
+vision_clock.json
+session_report.json
+records/
+preview/robot_cam_probe*.jpg
